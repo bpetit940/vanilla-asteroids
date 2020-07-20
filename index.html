@@ -12,10 +12,14 @@
       const FPS = 30; // frames per sec
       const FRICTION = 0.7; // friction CO of space (0 = no, 1 = lots)
       const ROIDS_NUM = 5; // starting asteroid number
+      const LASER_MAX = 10; // max num of lasers
+      const LASER_DIST = 0.6; // max dist of laser travel fraction of screen width
+      const LASER_SPD = 500; //speed of lasers pixels per sec
       const ROIDS_JAG = 0.4; // jaggedness of asteroids (0 = none, 1 = lots)
       const ROIDS_SIZE = 100; //starting size of asteroids pixels
       const ROIDS_VERT = 10; //avg number of vert on astroid
       const SHIP_EXPLODE_DUR = 0.3; //duration of ships explosion
+      const LASER_EXPLODE_DUR = 0.1; //duration of laser explosion sec
       const ROIDS_SPD = 50; // max starting speed of asteroids in pixels per second
       const SHIP_SIZE = 30; // ship height pixels
       const SHIP_INV_DUR = 3; //duration of ships invulurability seconds
@@ -52,8 +56,25 @@
             distBetweenPoints(ship.x, ship.y, x, y) <
             ROIDS_SIZE * 2 + ship.r
           );
-          roids.push(newAsteroid(x, y));
+          roids.push(newAsteroid(x, y, Math.ceil(ROIDS_SIZE / 2)));
         }
+      }
+
+      function destroyAsteroid(index) {
+        var x = roids[index].x;
+        var y = roids[index].y;
+        var r = roids[index].r;
+
+        //split roid into 2 if needed
+        if (r == Math.ceil(ROIDS_SIZE / 2)) {
+          roids.push(newAsteroid(x, y, Math.ceil(ROIDS_SIZE / 4)));
+          roids.push(newAsteroid(x, y, Math.ceil(ROIDS_SIZE / 4)));
+        } else if (r == Math.ceil(ROIDS_SIZE / 4)) {
+          roids.push(newAsteroid(x, y, Math.ceil(ROIDS_SIZE / 8)));
+          roids.push(newAsteroid(x, y, Math.ceil(ROIDS_SIZE / 8)));
+        }
+        //detroy roid
+        roids.splice(index, 1);
       }
 
       function distBetweenPoints(x1, y1, x2, y2) {
@@ -72,6 +93,9 @@
 
       function keyDown(ev) {
         switch (ev.keyCode) {
+          case 32: /// space bar (shoot)
+            shootLaser();
+            break;
           case 37: /// left arrow (rotate ship left)
             ship.rot = ((TURN_SPEED / 180) * Math.PI) / FPS;
             break;
@@ -87,6 +111,9 @@
 
       function keyUp(ev) {
         switch (ev.keyCode) {
+          case 32: // space bar (allow shoot)
+            ship.canShoot = true;
+            break;
           case 37: /// left arrow (stop rotating left)
             ship.rot = 0;
             break;
@@ -100,7 +127,7 @@
         }
       }
 
-      function newAsteroid(x, y) {
+      function newAsteroid(x, y, r) {
         var roid = {
           x: x,
           y: y,
@@ -110,7 +137,7 @@
           yv:
             ((Math.random() * ROIDS_SPD) / FPS) *
             (Math.random() < 0.5 ? 1 : -1),
-          r: ROIDS_SIZE / 2,
+          r: r,
           a: Math.random() * Math.PI * 2, // in radians
           vert: Math.floor(Math.random() * (ROIDS_VERT + 1) + ROIDS_VERT / 2),
           offs: [],
@@ -131,6 +158,8 @@
           blinkTime: Math.ceil(SHIP_BLINK_DUR * FPS),
           blinkNum: Math.ceil(SHIP_INV_DUR / SHIP_BLINK_DUR),
           explodeTime: 0,
+          canShoot: true,
+          lasers: [],
           rot: 0,
           thrusting: false,
           thrust: {
@@ -138,6 +167,23 @@
             y: 0,
           },
         };
+      }
+
+      function shootLaser() {
+        //create laser object
+        if (ship.canShoot && ship.lasers.length < LASER_MAX) {
+          ship.lasers.push({
+            // from nose
+            x: ship.x + (4 / 3) * ship.r * Math.cos(ship.a),
+            y: ship.y - (4 / 3) * ship.r * Math.sin(ship.a),
+            xv: (LASER_SPD * Math.cos(ship.a)) / FPS,
+            yv: -(LASER_SPD * Math.sin(ship.a)) / FPS,
+            dist: 0,
+            explodeTime: 0,
+          });
+        }
+        //prevent further shooting
+        ship.canShoot = false;
       }
 
       function update() {
@@ -244,6 +290,122 @@
           ctx.arc(ship.x, ship.y, ship.r * 0.6, 0, Math.PI * 2, false);
           ctx.fill();
         }
+        // draw lasers
+        for (var i = 0; i < ship.lasers.length; i++) {
+          if (ship.lasers[i].explodeTime == 0) {
+            ctx.fillStyle = "lime";
+            ctx.beginPath();
+            ctx.arc(
+              ship.lasers[i].x,
+              ship.lasers[i].y,
+              SHIP_SIZE / 15,
+              0,
+              Math.PI * 2,
+              false
+            );
+            ctx.fill();
+          } else {
+            //draw explosion
+            ctx.fillStyle = "yellow";
+            ctx.beginPath();
+            ctx.arc(
+              ship.lasers[i].x,
+              ship.lasers[i].y,
+              ship.r * 0.75,
+              0,
+              Math.PI * 2,
+              false
+            );
+            ctx.fill();
+            ctx.fillStyle = "red";
+            ctx.beginPath();
+            ctx.arc(
+              ship.lasers[i].x,
+              ship.lasers[i].y,
+              ship.r * 0.5,
+              0,
+              Math.PI * 2,
+              false
+            );
+            ctx.fill();
+            ctx.fillStyle = "orange";
+            ctx.beginPath();
+            ctx.arc(
+              ship.lasers[i].x,
+              ship.lasers[i].y,
+              ship.r * 0.25,
+              0,
+              Math.PI * 2,
+              false
+            );
+            ctx.fill();
+          }
+        }
+
+        // detect laser hits
+        var ax, ay, ar, lx, ly;
+        for (var i = roids.length - 1; i >= 0; i--) {
+          //grab roid properties
+          ax = roids[i].x;
+          ay = roids[i].y;
+          ar = roids[i].r;
+
+          //loop over lasers
+          for (var j = ship.lasers.length - 1; j >= 0; j--) {
+            //grab laser properties
+            lx = ship.lasers[j].x;
+            ly = ship.lasers[j].y;
+
+            //detection of hits
+            if (
+              ship.lasers[j].explodeTime == 0 &&
+              distBetweenPoints(ax, ay, lx, ly) < ar
+            ) {
+              //remove roid activate explosion
+              destroyAsteroid(i);
+              ship.lasers[j].explodeTime = Math.ceil(LASER_EXPLODE_DUR * FPS);
+              break;
+            }
+          }
+        }
+        //move lasers
+        for (var i = ship.lasers.length - 1; i >= 0; i--) {
+          //check dist traveled
+          if (ship.lasers[i].dist > LASER_DIST * canv.width) {
+            ship.lasers.splice(i, 1);
+            continue;
+          }
+
+          //handle explosion
+          if (ship.lasers[i].explodeTime > 0) {
+            ship.lasers[i].explodeTime--;
+            //destroy laser of dur
+            if (ship.lasers[i].explodeTime == 0) {
+              ship.lasers.splice(i, 1);
+              continue;
+            }
+          } else {
+            //move lasers
+            ship.lasers[i].x += ship.lasers[i].xv;
+            ship.lasers[i].y += ship.lasers[i].yv;
+
+            // calc dist traveled
+            ship.lasers[i].dist += Math.sqrt(
+              Math.pow(ship.lasers[i].xv, 2) + Math.pow(ship.lasers[i].yv, 2)
+            );
+          }
+          //handle edge of screen
+          if (ship.lasers[i].x < 0) {
+            ship.lasers[i].x = canv.width;
+          } else if (ship.lasers[i].x > canv.width) {
+            ship.lasers[i].x = 0;
+          }
+          if (ship.lasers[i].y < 0) {
+            ship.lasers[i].y = canv.height;
+          } else if (ship.lasers[i].y > canv.height) {
+            ship.lasers[i].y = 0;
+          }
+        }
 
         if (SHOW_BOUNDING) {
           ctx.strokeStyle = "lime";
@@ -288,6 +450,7 @@
             ctx.stroke();
           }
         }
+
         //check for asteroid collisions
         if (!exploding) {
           if (ship.blinkNum == 0) {
@@ -297,12 +460,15 @@
                 ship.r + roids[i].r
               ) {
                 explodeShip();
+                destroyAsteroid(i);
+                break;
               }
             }
           }
           //move ship
           ship.x += ship.thrust.x;
           ship.y += ship.thrust.y;
+
           //rotate ship
           ship.a += ship.rot;
         } else {
